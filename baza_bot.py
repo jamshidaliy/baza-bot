@@ -3,9 +3,6 @@ import schedule
 import time
 import threading
 from datetime import datetime
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
 
 TODOIST_TOKEN = "286baf4a646c56fa8cc00d3e3dd085f2b9809f6b"
 TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxzOOgkkWz-9nM_QIOtD4"
@@ -25,6 +22,7 @@ SECTIONS = {
     "Jamshid": "6gWV3pmfc5h3c6h5",
 }
 BAJARILDI_SECTION = "6grf9mRCqCgrPm85"
+last_update_id = 0
 
 def get_tasks(section_id):
     url = "https://api.todoist.com/api/v1/tasks"
@@ -67,40 +65,54 @@ def build_and_send():
     else:
         message += "  hali bajarilgan yoq\n"
     send_message(message)
+    print(f"Yuborildi: {datetime.now().strftime('%H:%M')}")
 
-@app.route(f"/webhook/{TELEGRAM_TOKEN}", methods=["POST"])
-def webhook():
-    data = request.json
-    message = data.get("message", {})
-    thread_id = str(message.get("message_thread_id", ""))
-    if thread_id != TOPIC_ID:
-        return jsonify({"ok": True})
-    if message.get("from", {}).get("is_bot"):
-        return jsonify({"ok": True})
-    username = message.get("from", {}).get("username", "")
-    text = message.get("text", "").strip()
-    if not text or not username:
-        return jsonify({"ok": True})
-    section_id = USERNAME_TO_SECTION.get(username)
-    if section_id:
-        success = add_task(text, section_id)
-        if success:
-            send_message(f"Task qoshildi @{username}:\n<i>{text}</i>")
-    return jsonify({"ok": True})
-
-@app.route("/")
-def index():
-    return "BAZA Bot ishlayapti!"
-
-def run_schedule():
-    schedule.every().day.at("04:00").do(build_and_send)
-    schedule.every().day.at("13:00").do(build_and_send)
+def poll_telegram():
+    global last_update_id
     while True:
-        schedule.run_pending()
-        time.sleep(60)
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            params = {"offset": last_update_id + 1, "timeout": 30}
+            res = requests.get(url, params=params, timeout=35)
+            updates = res.json().get("result", [])
+            for update in updates:
+                last_update_id = update["update_id"]
+                message = update.get("message", {})
+                thread_id = str(message.get("message_thread_id", ""))
+                if thread_id != TOPIC_ID:
+                    continue
+                if message.get("from", {}).get("is_bot"):
+                    continue
+                username = message.get("from", {}).get("username", "")
+                text = message.get("text", "").strip()
+                if not text or not username:
+                    continue
+                # Faqat + bilan boshlangan xabarlar
+                if not text.startswith("+"):
+                    continue
+                task_text = text[1:].strip()
+                if not task_text:
+                    continue
+                section_id = USERNAME_TO_SECTION.get(username)
+                if section_id:
+                    success = add_task(task_text, section_id)
+                    if success:
+                        send_message(f"✅ Task qoshildi @{username}:\n<i>{task_text}</i>")
+                        print(f"Task qoshildi: {username} -> {task_text}")
+                else:
+                    print(f"Noma'lum username: {username}")
+        except Exception as e:
+            print(f"Polling xato: {e}")
+            time.sleep(5)
 
-if __name__ == "__main__":
-    t = threading.Thread(target=run_schedule, daemon=True)
-    t.start()
-    print("Bot ishga tushdi!")
-    app.run(host="0.0.0.0", port=10000)
+schedule.every().day.at("04:00").do(build_and_send)
+schedule.every().day.at("13:00").do(build_and_send)
+
+t = threading.Thread(target=poll_telegram, daemon=True)
+t.start()
+print("Bot ishga tushdi!")
+build_and_send()
+
+while True:
+    schedule.run_pending()
+    time.sleep(60)
