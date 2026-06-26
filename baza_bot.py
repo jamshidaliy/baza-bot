@@ -1,177 +1,55 @@
-import requests
-import schedule
-import time
-import threading
-from datetime import datetime, date
+import asyncio
+import logging
+from datetime import datetime
+import pytz
+from telegram import Bot
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-TODOIST_TOKEN = "286baf4a646c56fa8cc00d3e3dd085f2b9809f6b"
-TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxzOOgkkWz-9nM_QIOtD4"
-CHAT_ID = "-1002785026064"
-TOPIC_ID = "211"
-PROJECT_ID = "6gWV3gFXVmhWM2hX"
+# === SOZLAMALAR ===
+TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxz00gkkWz-9nM_QI0tD4"
+CHAT_ID = -1002785026064
+MULOQOT_THREAD_ID = 1
+TASHKENT_TZ = pytz.timezone("Asia/Tashkent")
 
-USERNAME_TO_SECTION = {
-    "jamshid_aliyy": "6gWV3pmfc5h3c6h5",
-    "ravoquz": "6gWV3hrV2f7WrMHX",
-    "jobirmx": "6gWV3p92Rp87XJ6X",
-}
+# === XABARLAR ===
+JOBIR_MSG = "Jobir aka, bugun ishga 10:00 da kelishingizni eslatib qo'yay degandim"
+JAMSHID_MSG = "Jamshid aka, bugun ishga 10:00 da kelishingizni eslatib qo'yay degandim"
 
-SECTIONS = {
-    "Sunnat": "6gWV3hrV2f7WrMHX",
-    "Jobir": "6gWV3p92Rp87XJ6X",
-    "Jamshid": "6gWV3pmfc5h3c6h5",
-}
-BAJARILDI_SECTION = "6grf9mRCqCgrPm85"
-last_update_id = 0
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+bot = Bot(token=TELEGRAM_TOKEN)
 
-def get_tasks(section_id):
-    url = "https://api.todoist.com/api/v1/tasks"
-    headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
-    params = {"project_id": PROJECT_ID, "section_id": section_id}
-    res = requests.get(url, headers=headers, params=params)
-    return res.json().get("results", [])
+async def send_jobir_reminder():
+        now = datetime.now(TASHKENT_TZ)
+        weekday = now.weekday()
+        if weekday in [1, 3, 5]:  # Se, Pay, Shan
+            await bot.send_message(
+                            chat_id=CHAT_ID,
+                            message_thread_id=MULOQOT_THREAD_ID,
+                            text=JOBIR_MSG
+            )
+                    logger.info(f"Jobir eslatmasi yuborildi: {now}")
 
+async def send_jamshid_reminder():
+        now = datetime.now(TASHKENT_TZ)
+        weekday = now.weekday()
+        if weekday in [0, 2, 4]:  # Du, Chor, Ju
+            await bot.send_message(
+                            chat_id=CHAT_ID,
+                            message_thread_id=MULOQOT_THREAD_ID,
+                            text=JAMSHID_MSG
+            )
+                    logger.info(f"Jamshid eslatmasi yuborildi: {now}")
 
-def add_task(content, section_id):
-    url = "https://api.todoist.com/api/v1/tasks"
-    headers = {"Authorization": f"Bearer {TODOIST_TOKEN}", "Content-Type": "application/json"}
-    data = {"content": content, "project_id": PROJECT_ID, "section_id": section_id}
-    res = requests.post(url, headers=headers, json=data)
-    return res.status_code == 200
+async def main():
+        scheduler = AsyncIOScheduler(timezone=TASHKENT_TZ)
+        scheduler.add_job(send_jobir_reminder, "cron", hour=9, minute=0)
+        scheduler.add_job(send_jamshid_reminder, "cron", hour=9, minute=0)
+        scheduler.start()
+        logger.info("Bot ishga tushdi!")
+        while True:
+                    await asyncio.sleep(60)
 
-
-def send_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "message_thread_id": TOPIC_ID, "text": text, "parse_mode": "HTML"}
-    requests.post(url, data=data)
-
-
-def format_due(task):
-    due = task.get("due")
-    if not due:
-        return ""
-    due_date_str = due.get("date", "")
-    if not due_date_str:
-        return ""
-    try:
-        due_date = datetime.strptime(due_date_str[:10], "%Y-%m-%d").date()
-        today = date.today()
-        delta = (due_date - today).days
-        formatted = due_date.strftime("%d.%m.%Y")
-        if delta < 0:
-            return f" <b>(muddat: {formatted}, {abs(delta)} kun otdi!)</b>"
-        elif delta == 0:
-            return f" <b>(muddat: bugun!)</b>"
-        elif delta == 1:
-            return f" (muddat: ertaga, {formatted})"
-        else:
-            return f" (muddat: {formatted})"
-    except Exception:
-        return f" (muddat: {due_date_str[:10]})"
-
-
-def build_and_send():
-    now = datetime.now()
-    vaqt = "Ertalab" if now.hour < 12 else "Kechqurun"
-    message = f"<b>BAZA | {vaqt} holati ({now.strftime('%d.%m.%Y %H:%M')})</b>\n"
-    message += "________________________\n\n"
-    for name, section_id in SECTIONS.items():
-        tasks = get_tasks(section_id)
-        message += f"<b>{name}:</b>\n"
-        if tasks:
-            for task in tasks:
-                due_str = format_due(task)
-                message += f" - {task['content']}{due_str}\n"
-        else:
-            message += " vazifa yoq\n"
-        message += "\n"
-    done = get_tasks(BAJARILDI_SECTION)
-    message += "<b>Bajarildi:</b>\n"
-    if done:
-        for task in done:
-            message += f" - {task['content']}\n"
-    else:
-        message += " hali bajarilgan yoq\n"
-    send_message(message)
-    print(f"Yuborildi: {datetime.now().strftime('%H:%M')}")
-
-
-def send_today_report():
-    today_str = date.today().strftime("%Y-%m-%d")
-    message = f"<b>BUGUNGI MUDDAT | {date.today().strftime('%d.%m.%Y')}</b>\n"
-    message += "________________________\n\n"
-    has_tasks = False
-    for name, section_id in SECTIONS.items():
-        tasks = get_tasks(section_id)
-        today_tasks = []
-        for task in tasks:
-            due = task.get("due")
-            if due and due.get("date", "")[:10] == today_str:
-                today_tasks.append(task)
-        if today_tasks:
-            has_tasks = True
-            message += f"<b>{name}:</b>\n"
-            for task in today_tasks:
-                message += f" - {task['content']}\n"
-            message += "\n"
-    if has_tasks:
-        send_message(message)
-        print(f"Bugungi hisobot yuborildi: {datetime.now().strftime('%H:%M')}")
-    else:
-        print("Bugun tugashi kerak bolgan vazifalar yoq")
-
-
-def poll_telegram():
-    global last_update_id
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            params = {"offset": last_update_id + 1, "timeout": 30}
-            res = requests.get(url, params=params, timeout=35)
-            updates = res.json().get("result", [])
-            for update in updates:
-                last_update_id = update["update_id"]
-                message = update.get("message", {})
-                thread_id = str(message.get("message_thread_id", ""))
-                if thread_id != TOPIC_ID:
-                    continue
-                if message.get("from", {}).get("is_bot"):
-                    continue
-                username = message.get("from", {}).get("username", "")
-                text = message.get("text", "").strip()
-                if not text or not username:
-                    continue
-                if text == "?":
-                    build_and_send()
-                    continue
-                if not text.startswith("+"):
-                    continue
-                task_text = text[1:].strip()
-                if not task_text:
-                    continue
-                section_id = USERNAME_TO_SECTION.get(username)
-                if section_id:
-                    success = add_task(task_text, section_id)
-                    if success:
-                        send_message(f"Task qoshildi @{username}:\n<i>{task_text}</i>")
-                        print(f"Task qoshildi: {username} -> {task_text}")
-                else:
-                    print(f"Noma'lum username: {username}")
-        except Exception as e:
-            print(f"Polling xato: {e}")
-            time.sleep(5)
-
-
-schedule.every().day.at("04:00").do(build_and_send)
-schedule.every().day.at("13:00").do(build_and_send)
-schedule.every().day.at("08:00").do(send_today_report)
-
-t = threading.Thread(target=poll_telegram, daemon=True)
-t.start()
-print("Bot ishga tushdi!")
-build_and_send()
-
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+    if __name__ == "__main__":
+            asyncio.run(main())
