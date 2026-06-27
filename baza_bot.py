@@ -44,12 +44,9 @@ def send_message(text):
     requests.post(url, data=data)
 
 def build_and_send():
-    now = datetime.utcnow()
-    hour = now.hour + 5
-    if hour >= 24:
-        hour -= 24
-    vaqt = "Ertalab" if hour < 12 else "Kechqurun"
-    message = f"<b>BAZA | {vaqt} holati ({hour:02d}:{now.minute:02d} Toshkent)</b>\n"
+    now = datetime.now()
+    vaqt = "Ertalab" if now.hour < 12 else "Kechqurun"
+    message = f"<b>BAZA | {vaqt} holati ({now.strftime('%d.%m.%Y %H:%M')})</b>\n"
     message += "________________________\n\n"
     for name, section_id in SECTIONS.items():
         tasks = get_tasks(section_id)
@@ -68,7 +65,7 @@ def build_and_send():
     else:
         message += "  hali bajarilgan yoq\n"
     send_message(message)
-    print(f"Yuborildi: {now.hour}:{now.minute:02d} UTC")
+    print(f"Yuborildi: {now.strftime('%H:%M')}")
 
 def poll_telegram():
     global last_update_id
@@ -105,8 +102,6 @@ def poll_telegram():
             print(f"Polling xato: {e}")
             time.sleep(5)
 
-# UTC 04:00 = Toshkent 09:00
-# UTC 13:00 = Toshkent 18:00
 schedule.every().day.at("04:00").do(build_and_send)
 schedule.every().day.at("13:00").do(build_and_send)
 
