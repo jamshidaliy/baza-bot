@@ -7,9 +7,9 @@ import pytz
 
 TODOIST_TOKEN = "286baf4a646c56fa8cc00d3e3dd085f2b9809f6b"
 TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxzOOgkkWz-9nM_QIOtD4"
-CHAT_ID = "-1002785026064"
-TOPIC_ZADANIYA = "211"
-TOPIC_MULOQOT = "1"
+CHAT_ID = -1002785026064
+TOPIC_ZADANIYA = 211
+TOPIC_MULOQOT = 1
 PROJECT_ID = "6gWV3gFXVmhWM2hX"
 TZ = pytz.timezone("Asia/Tashkent")
 
@@ -136,14 +136,13 @@ def poll_telegram():
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
             params = {"offset": last_update_id + 1, "timeout": 30}
             res = requests.get(url, params=params, timeout=35)
-            data = res.json()
-            updates = data.get("result", [])
+            updates = res.json().get("result", [])
             for update in updates:
                 last_update_id = update["update_id"]
                 message = update.get("message", {})
                 if not message:
                     continue
-                thread_id = str(message.get("message_thread_id", ""))
+                thread_id = message.get("message_thread_id")
                 from_data = message.get("from", {})
                 if from_data.get("is_bot"):
                     continue
@@ -151,13 +150,14 @@ def poll_telegram():
                 text = message.get("text", "").strip()
                 if not text:
                     continue
-                print(f"Xabar: @{username} thread={thread_id} text={text[:30]}")
+                print(f"Xabar: @{username} thread={thread_id} text={text[:40]}")
                 if thread_id != TOPIC_ZADANIYA:
+                    print(f"Thread mos emas: {thread_id} != {TOPIC_ZADANIYA}")
                     continue
                 if text == "?":
                     msg = build_status_message()
                     send_message(msg, TOPIC_ZADANIYA)
-                    print(f"? holat soraldi: @{username}")
+                    print(f"? javob berildi: @{username}")
                     continue
                 if text.startswith("+"):
                     task_text = text[1:].strip()
@@ -168,7 +168,7 @@ def poll_telegram():
                         success = add_task(task_text, section_id)
                         if success:
                             send_message(f"Task qoshildi @{username}:\n<i>{task_text}</i>")
-                            print(f"Task: @{username} -> {task_text}")
+                            print(f"Task qoshildi: @{username} -> {task_text}")
                         else:
                             send_message(f"Xatolik @{username}")
                     else:
