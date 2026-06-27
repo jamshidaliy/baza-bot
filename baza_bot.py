@@ -5,7 +5,6 @@ import threading
 from datetime import datetime
 import pytz
 
-# === SOZLAMALAR ===
 TODOIST_TOKEN = "286baf4a646c56fa8cc00d3e3dd085f2b9809f6b"
 TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxzOOgkkWz-9nM_QIOtD4"
 CHAT_ID = "-1002785026064"
@@ -61,9 +60,23 @@ def send_message(text, topic_id=None):
         "parse_mode": "HTML"
     }
     try:
-        requests.post(url, data=data, timeout=10)
+        res = requests.post(url, data=data, timeout=10)
+        return res.json()
     except Exception as e:
         print(f"send_message xato: {e}")
+
+def format_due(task):
+    due = task.get("due")
+    if not due:
+        return ""
+    date_str = due.get("date", "")
+    if not date_str:
+        return ""
+    try:
+        d = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        return f" ({d.strftime('%d.%m')})"
+    except:
+        return ""
 
 def build_status_message():
     now = datetime.now(TZ)
@@ -82,7 +95,8 @@ def build_status_message():
         message += f"<b>{name}:</b>\n"
         if tasks:
             for task in tasks:
-                message += f"  - {task['content']}\n"
+                due = format_due(task)
+                message += f"  - {task['content']}{due}\n"
         else:
             message += "  vazifa yoq\n"
         message += "\n"
@@ -122,18 +136,23 @@ def poll_telegram():
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
             params = {"offset": last_update_id + 1, "timeout": 30}
             res = requests.get(url, params=params, timeout=35)
-            updates = res.json().get("result", [])
+            data = res.json()
+            updates = data.get("result", [])
             for update in updates:
                 last_update_id = update["update_id"]
                 message = update.get("message", {})
+                if not message:
+                    continue
                 thread_id = str(message.get("message_thread_id", ""))
-                if thread_id != TOPIC_ZADANIYA:
+                from_data = message.get("from", {})
+                if from_data.get("is_bot"):
                     continue
-                if message.get("from", {}).get("is_bot"):
-                    continue
-                username = message.get("from", {}).get("username", "")
+                username = from_data.get("username", "")
                 text = message.get("text", "").strip()
-                if not text or not username:
+                if not text:
+                    continue
+                print(f"Xabar: @{username} thread={thread_id} text={text[:30]}")
+                if thread_id != TOPIC_ZADANIYA:
                     continue
                 if text == "?":
                     msg = build_status_message()
@@ -153,6 +172,7 @@ def poll_telegram():
                         else:
                             send_message(f"Xatolik @{username}")
                     else:
+                        send_message(f"@{username} tizimda topilmadi")
                         print(f"Noma'lum: @{username}")
         except Exception as e:
             print(f"Polling xato: {e}")
