@@ -1,3 +1,4 @@
+import os
 import requests
 import schedule
 import time
@@ -5,8 +6,8 @@ import threading
 from datetime import datetime
 import pytz
 
-TODOIST_TOKEN = "286baf4a646c56fa8cc00d3e3dd085f2b9809f6b"
-TELEGRAM_TOKEN = "8666647454:AAGRvbbE8PnmP7cxzOOgkkWz-9nM_QIOtD4"
+TODOIST_TOKEN = os.environ["TODOIST_API_TOKEN"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = -1002785026064
 TOPIC_ZADANIYA = 211
 TOPIC_MULOQOT = 1
