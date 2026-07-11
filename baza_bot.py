@@ -1,6 +1,6 @@
 import os
+import re
 import requests
-import schedule
 import time
 import threading
 from datetime import datetime
@@ -30,6 +30,8 @@ BAJARILDI_SECTION = "6grf9mRCqCgrPm85"
 TODOIST_BASE = "https://api.todoist.com/api/v1"
 TODOIST_HEADERS = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
 
+DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$")
+
 last_update_id = 0
 
 
@@ -50,9 +52,33 @@ def get_tasks(section_id, retries=2):
     return []
 
 
-def add_task(content, section_id, retries=2):
+def parse_due_date(date_part):
+    m = DATE_RE.match(date_part.strip())
+    if not m:
+        return None
+    day_s, month_s, year_s = m.groups()
+    day, month = int(day_s), int(month_s)
+    now = datetime.now(TZ)
+    year = int(year_s) if year_s else now.year
+    if year < 100:
+        year += 2000
+    try:
+        due = datetime(year, month, day)
+    except ValueError:
+        return None
+    if not year_s and due.date() < now.date():
+        try:
+            due = datetime(year + 1, month, day)
+        except ValueError:
+            return None
+    return due.strftime("%Y-%m-%d")
+
+
+def add_task(content, section_id, due_date=None, retries=2):
     url = f"{TODOIST_BASE}/tasks"
     data = {"content": content, "project_id": PROJECT_ID, "section_id": section_id}
+    if due_date:
+        data["due_date"] = due_date
     for attempt in range(retries + 1):
         try:
             res = requests.post(url, headers=TODOIST_HEADERS, json=data, timeout=15)
@@ -145,6 +171,15 @@ def send_status():
         print(f"send_status xato: {e}")
 
 
+def delete_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
+        requests.get(url, params={"drop_pending_updates": "false"}, timeout=15)
+        print("Webhook ochirildi (agar mavjud bolsa)")
+    except Exception as e:
+        print(f"deleteWebhook xato: {e}")
+
+
 def poll_telegram():
     global last_update_id
     print("Polling boshlandi...")
@@ -187,15 +222,26 @@ def poll_telegram():
                     continue
 
                 if text.startswith("+"):
-                    task_text = text[1:].strip()
-                    if not task_text:
+                    raw = text[1:].strip()
+                    if not raw:
                         continue
+
+                    task_text = raw
+                    due_date = None
+                    if "|" in raw:
+                        content_part, date_part = raw.rsplit("|", 1)
+                        parsed = parse_due_date(date_part)
+                        if parsed:
+                            task_text = content_part.strip()
+                            due_date = parsed
+
                     section_id = USERNAME_TO_SECTION.get(username.lower())
                     if section_id:
-                        success = add_task(task_text, section_id)
+                        success = add_task(task_text, section_id, due_date=due_date)
                         if success:
-                            send_message(f"Task qoshildi @{username}: {task_text}", TOPIC_ZADANIYA)
-                            print(f"Task qoshildi: @{username} -> {task_text}")
+                            due_info = f" (muddat: {due_date})" if due_date else ""
+                            send_message(f"Task qoshildi @{username}: {task_text}{due_info}", TOPIC_ZADANIYA)
+                            print(f"Task qoshildi: @{username} -> {task_text} due={due_date}")
                         else:
                             send_message(f"Task qoshishda xatolik @{username}", TOPIC_ZADANIYA)
                     else:
@@ -208,13 +254,19 @@ def poll_telegram():
 
 
 def run_schedule():
-    schedule.every().day.at("04:00").do(send_status)
-    schedule.every().day.at("09:00").do(send_status)
-    schedule.every().day.at("13:00").do(send_status)
+    sent_log = set()
+    target_hours = (9, 14, 18)
     print("Schedule sozlandi: 09:00, 14:00, 18:00 Toshkent")
     while True:
         try:
-            schedule.run_pending()
+            now = datetime.now(TZ)
+            if now.hour in target_hours and now.minute == 0:
+                key = f"{now.strftime('%Y-%m-%d')}-{now.hour}"
+                if key not in sent_log:
+                    send_status()
+                    sent_log.add(key)
+            if len(sent_log) > 30:
+                sent_log.clear()
         except Exception as e:
             print(f"Schedule xato: {e}")
         time.sleep(20)
@@ -223,6 +275,8 @@ def run_schedule():
 if __name__ == "__main__":
     print("BAZA Bot ishga tushdi!")
     print(f"Vaqt: {datetime.now(TZ).strftime('%d.%m.%Y %H:%M')} Toshkent")
+
+    delete_webhook()
 
     t1 = threading.Thread(target=run_schedule, daemon=True)
     t1.start()
