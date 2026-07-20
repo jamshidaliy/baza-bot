@@ -126,6 +126,19 @@ def format_due(task):
         return ""
 
 
+def get_task_due_date(task):
+    due = task.get("due")
+    if not due:
+        return None
+    date_str = due.get("date", "")
+    if not date_str:
+        return None
+    try:
+        return datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
 def build_status_message():
     now = datetime.now(TZ)
     hour = now.hour
@@ -162,6 +175,61 @@ def build_status_message():
     return message
 
 
+def build_today_tasks_message():
+    now = datetime.now(TZ)
+    today = now.date()
+
+    message = "<b>BAZA | BUGUNGI QILINISHI KERAK ISHLAR</b>\n"
+    message += f"<i>{now.strftime('%d.%m.%Y %H:%M')} Toshkent</i>\n"
+    message += "________________________\n\n"
+
+    found_any = False
+    for name, section_id in SECTIONS.items():
+        tasks = get_tasks(section_id)
+        today_tasks = [t for t in tasks if get_task_due_date(t) == today]
+        if today_tasks:
+            found_any = True
+            message += f"<b>{name}:</b>\n"
+            for task in today_tasks:
+                due = format_due(task)
+                message += f" - {task['content']}{due}\n"
+            message += "\n"
+
+    if not found_any:
+        message += "Bugun uchun vazifa yoq\n"
+
+    return message
+
+
+def build_overdue_tasks_message():
+    now = datetime.now(TZ)
+    today = now.date()
+
+    message = "<b>BAZA | Qolib ketayotgan ishlar</b>\n"
+    message += f"<i>{now.strftime('%d.%m.%Y %H:%M')} Toshkent</i>\n"
+    message += "________________________\n\n"
+
+    found_any = False
+    for name, section_id in SECTIONS.items():
+        tasks = get_tasks(section_id)
+        overdue_tasks = [
+            t for t in tasks
+            if get_task_due_date(t) is not None and get_task_due_date(t) < today
+        ]
+        if overdue_tasks:
+            found_any = True
+            message += f"<b>{name}:</b>\n"
+            for task in overdue_tasks:
+                due = format_due(task)
+                message += f" - {task['content']}{due}\n"
+            message += "\n"
+
+    if not found_any:
+        message += "Qolib ketgan vazifa yoq\n"
+
+    return message
+
+
 def send_status():
     try:
         msg = build_status_message()
@@ -169,6 +237,24 @@ def send_status():
         print(f"Holat yuborildi: {datetime.now(TZ).strftime('%H:%M')}")
     except Exception as e:
         print(f"send_status xato: {e}")
+
+
+def send_today_tasks():
+    try:
+        msg = build_today_tasks_message()
+        send_message(msg, TOPIC_ZADANIYA)
+        print(f"Bugungi ishlar yuborildi: {datetime.now(TZ).strftime('%H:%M')}")
+    except Exception as e:
+        print(f"send_today_tasks xato: {e}")
+
+
+def send_overdue_tasks():
+    try:
+        msg = build_overdue_tasks_message()
+        send_message(msg, TOPIC_ZADANIYA)
+        print(f"Qolib ketgan ishlar yuborildi: {datetime.now(TZ).strftime('%H:%M')}")
+    except Exception as e:
+        print(f"send_overdue_tasks xato: {e}")
 
 
 def delete_webhook():
@@ -221,6 +307,18 @@ def poll_telegram():
                     print(f"javob berildi: @{username}")
                     continue
 
+                if text.lower() == "bugun?":
+                    msg = build_today_tasks_message()
+                    send_message(msg, TOPIC_ZADANIYA)
+                    print(f"bugungi ishlar yuborildi (qo'lda so'ralgan): @{username}")
+                    continue
+
+                if text.lower() == "qolgan ishlar?":
+                    msg = build_overdue_tasks_message()
+                    send_message(msg, TOPIC_ZADANIYA)
+                    print(f"qolib ketgan ishlar yuborildi (qo'lda so'ralgan): @{username}")
+                    continue
+
                 if text.startswith("+"):
                     raw = text[1:].strip()
                     if not raw:
@@ -250,21 +348,33 @@ def poll_telegram():
 
         except Exception as e:
             print(f"Polling xato: {e}")
-            time.sleep(5)
+        time.sleep(5)
 
 
 def run_schedule():
     sent_log = set()
-    target_hours = (9, 14, 18)
-    print("Schedule sozlandi: 09:00, 14:00, 18:00 Toshkent")
+    print("Schedule sozlandi: 12:00 (umumiy xisobot), 17:00 (bugungi ishlar + qolib ketganlar) Toshkent")
     while True:
         try:
             now = datetime.now(TZ)
-            if now.hour in target_hours and now.minute == 0:
-                key = f"{now.strftime('%Y-%m-%d')}-{now.hour}"
+
+            if now.hour == 12 and now.minute == 0:
+                key = f"{now.strftime('%Y-%m-%d')}-12-status"
                 if key not in sent_log:
                     send_status()
                     sent_log.add(key)
+
+            if now.hour == 17 and now.minute == 0:
+                key_today = f"{now.strftime('%Y-%m-%d')}-17-today"
+                if key_today not in sent_log:
+                    send_today_tasks()
+                    sent_log.add(key_today)
+
+                key_overdue = f"{now.strftime('%Y-%m-%d')}-17-overdue"
+                if key_overdue not in sent_log:
+                    send_overdue_tasks()
+                    sent_log.add(key_overdue)
+
             if len(sent_log) > 30:
                 sent_log.clear()
         except Exception as e:
